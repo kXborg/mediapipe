@@ -133,12 +133,11 @@ class NodeTypeInfo {
   // This function is only valid for a NodeTypeInfo of NodeType CALCULATOR.
   bool AddSource(int index) { return ancestor_sources_.insert(index).second; }
 
-  // Convert the NodeType enum into a std::string (generally for error
-  // messaging).
+  // Convert the NodeType enum into a string (generally for error messaging).
   static std::string NodeTypeToString(NodeType node_type);
 
-  // Returns the name of the specified InputStreamHandler, or empty std::string
-  // if none set.
+  // Returns the name of the specified InputStreamHandler, or empty string if
+  // none set.
   std::string GetInputStreamHandler() const {
     return contract_.GetInputStreamHandler();
   }
@@ -196,7 +195,7 @@ class ValidatedGraphConfig {
   // before any other functions.  Subgraphs are specified through the
   // global graph registry or an optional local graph registry.
   absl::Status Initialize(
-      const CalculatorGraphConfig& input_config,
+      CalculatorGraphConfig input_config,
       const GraphRegistry* graph_registry = nullptr,
       const Subgraph::SubgraphOptions* graph_options = nullptr,
       const GraphServiceManager* service_manager = nullptr);
@@ -303,6 +302,13 @@ class ValidatedGraphConfig {
   }
 
  private:
+  // Perform transforms such as converting legacy features, expanding
+  // subgraphs, and popluting input stream handler.
+  absl::Status PerformBasicTransforms(
+      const GraphRegistry* graph_registry,
+      const Subgraph::SubgraphOptions* graph_options,
+      const GraphServiceManager* service_manager);
+
   // Initialize the PacketGenerator information.
   absl::Status InitializeGeneratorInfo();
   // Initialize the Calculator information.
@@ -383,6 +389,9 @@ class ValidatedGraphConfig {
   // Infer the type of types set to "Any" by what they are connected to.
   absl::Status ResolveAnyTypes(std::vector<EdgeInfo>* input_edges,
                                std::vector<EdgeInfo>* output_edges);
+  // Narrow down OneOf types if they other end is a single type.
+  absl::Status ResolveOneOfTypes(std::vector<EdgeInfo>* input_edges,
+                                 std::vector<EdgeInfo>* output_edges);
 
   // Returns an error if the generator graph does not have consistent
   // type specifications for side packets.

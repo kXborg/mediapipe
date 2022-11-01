@@ -21,9 +21,14 @@
 using mediapipe::GlTextureBufferSharedPtr;
 
 JNIEXPORT void JNICALL GRAPH_TEXTURE_FRAME_METHOD(nativeReleaseBuffer)(
-    JNIEnv* env, jobject thiz, jlong nativeHandle) {
+    JNIEnv* env, jobject thiz, jlong nativeHandle, jlong consumerSyncToken) {
   GlTextureBufferSharedPtr* buffer =
       reinterpret_cast<GlTextureBufferSharedPtr*>(nativeHandle);
+  if (consumerSyncToken) {
+    mediapipe::GlSyncToken& token =
+        *reinterpret_cast<mediapipe::GlSyncToken*>(consumerSyncToken);
+    (*buffer)->DidRead(token);
+  }
   delete buffer;
 }
 
@@ -53,4 +58,29 @@ JNIEXPORT jint JNICALL GRAPH_TEXTURE_FRAME_METHOD(nativeGetHeight)(
   GlTextureBufferSharedPtr* buffer =
       reinterpret_cast<GlTextureBufferSharedPtr*>(nativeHandle);
   return (*buffer)->height();
+}
+
+JNIEXPORT jlong JNICALL GRAPH_TEXTURE_FRAME_METHOD(
+    nativeCreateSyncTokenForCurrentExternalContext)(JNIEnv* env, jobject thiz,
+                                                    jlong nativeHandle) {
+  GlTextureBufferSharedPtr* buffer =
+      reinterpret_cast<GlTextureBufferSharedPtr*>(nativeHandle);
+  mediapipe::GlSyncToken* token = nullptr;
+  auto context_for_deletion = (*buffer)->GetProducerContext();
+  // A GlTextureBuffer won't have a producer context if the contents haven't
+  // been produced by MediaPipe. In that case we won't have a context to use
+  // to release the sync fence.
+  // TODO: get the graph's main context from the packet context?
+  // Or clean up in some other way?
+  if (context_for_deletion) {
+    auto sync = mediapipe::GlContext::CreateSyncTokenForCurrentExternalContext(
+        context_for_deletion);
+    // A Java handle to a token is a raw pointer to a std::shared_ptr on the
+    // heap, cast to a long. If the shared_ptr itself is null, leave the token
+    // null too.
+    if (sync) {
+      token = new mediapipe::GlSyncToken(std::move(sync));
+    }
+  }
+  return reinterpret_cast<jlong>(token);
 }

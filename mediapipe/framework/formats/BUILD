@@ -187,14 +187,25 @@ cc_library(
     ],
 )
 
+config_setting(
+    name = "opencv",
+    define_values = {
+        "use_opencv": "true",
+    },
+)
+
+config_setting(
+    name = "portable_opencv",
+    define_values = {
+        "use_portable_opencv": "true",
+        "use_opencv": "false",
+    },
+)
+
 cc_library(
     name = "location",
     srcs = ["location.cc"],
     hdrs = ["location.h"],
-    defines = select({
-        "//conditions:default": [],
-        "//mediapipe:android": ["MEDIAPIPE_ANDROID_OPENCV"],
-    }),
     visibility = ["//visibility:public"],
     deps = [
         "@com_google_protobuf//:protobuf",
@@ -216,16 +227,33 @@ cc_library(
         "//mediapipe/framework/formats/annotation:rasterization_cc_proto",
     ] + select({
         "//conditions:default": [
-            "//mediapipe/framework/port:opencv_imgproc",
-        ],
-        "//mediapipe/framework/port:disable_opencv": [],
-    }) + select({
-        "//conditions:default": [
         ],
         "//mediapipe:android": [],
         "//mediapipe:apple": [],
     }),
     alwayslink = 1,
+)
+
+cc_library(
+    name = "location_opencv",
+    srcs = ["location_opencv.cc"],
+    hdrs = ["location_opencv.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":location",
+        "//mediapipe/framework/port:opencv_imgproc",
+    ],
+    alwayslink = 1,
+)
+
+cc_test(
+    name = "location_opencv_test",
+    srcs = ["location_opencv_test.cc"],
+    deps = [
+        ":location_opencv",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:rectangle",
+    ],
 )
 
 cc_library(
@@ -265,7 +293,6 @@ mediapipe_proto_library(
     name = "rect_proto",
     srcs = ["rect.proto"],
     visibility = ["//visibility:public"],
-    deps = ["//mediapipe/framework/formats:location_data_proto"],
 )
 
 mediapipe_register_type(
@@ -306,13 +333,6 @@ mediapipe_register_type(
     deps = [":landmark_cc_proto"],
 )
 
-# Expose the proto source files for building mediapipe AAR.
-filegroup(
-    name = "protos_src",
-    srcs = glob(["*.proto"]),
-    visibility = ["//mediapipe:__subpackages__"],
-)
-
 cc_library(
     name = "image",
     srcs = ["image.cc"],
@@ -332,15 +352,13 @@ cc_library(
         "//mediapipe/framework:port",
         "//mediapipe/framework:type_map",
         "//mediapipe/framework/port:logging",
+        "//mediapipe/gpu:gpu_buffer",
+        "//mediapipe/gpu:gpu_buffer_format",
     ] + select({
         "//conditions:default": [
-            "//mediapipe/gpu:gpu_buffer",
-            "//mediapipe/gpu:gpu_buffer_format",
             "//mediapipe/gpu:gl_texture_buffer",
         ],
         "//mediapipe:ios": [
-            "//mediapipe/gpu:gpu_buffer",
-            "//mediapipe/gpu:gpu_buffer_format",
         ],
         "//mediapipe/gpu:disable_gpu": [],
     }) + select({
@@ -430,7 +448,11 @@ cc_test(
 
 cc_library(
     name = "tensor",
-    srcs = ["tensor.cc"],
+    srcs =
+        [
+            "tensor.cc",
+            "tensor_ahwb.cc",
+        ],
     hdrs = ["tensor.h"],
     copts = select({
         "//mediapipe:apple": [
@@ -439,12 +461,20 @@ cc_library(
         ],
         "//conditions:default": [],
     }),
+    defines = select({
+        "//mediapipe/framework:android_no_jni": ["MEDIAPIPE_NO_JNI"],
+        "//conditions:default": [],
+    }),
     linkopts = select({
         "//mediapipe:ios": [
             "-framework CoreVideo",
             "-framework MetalKit",
         ],
         "//conditions:default": [],
+        "//mediapipe/framework:android_no_jni": [],
+        "//mediapipe:android": [
+            "-landroid",
+        ],
     }),
     visibility = ["//visibility:public"],
     deps = [

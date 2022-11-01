@@ -14,9 +14,13 @@
 
 #include "mediapipe/framework/formats/image.h"
 
+#include <memory>
+
+#include "absl/strings/str_format.h"
 #include "mediapipe/python/pybind/image_frame_util.h"
 #include "mediapipe/python/pybind/util.h"
 #include "pybind11/stl.h"
+#include "stb_image.h"
 
 namespace mediapipe {
 namespace python {
@@ -84,8 +88,8 @@ void ImageSubmodule(pybind11::module* module) {
                                  "uint8 image data should be one of the GRAY8, "
                                  "SRGB, and SRGBA MediaPipe image formats.");
             }
-            return Image(std::make_shared<ImageFrame>(
-                std::move(*CreateImageFrame<uint8>(format, data).release())));
+            return Image(std::shared_ptr<ImageFrame>(
+                CreateImageFrame<uint8>(format, data)));
           }),
           R"doc(For uint8 data type, valid ImageFormat are GRAY8, SGRB, and SRGBA.)doc",
           py::arg("image_format"), py::arg("data").noconvert())
@@ -100,8 +104,8 @@ void ImageSubmodule(pybind11::module* module) {
                   "uint16 image data should be one of the GRAY16, "
                   "SRGB48, and SRGBA64 MediaPipe image formats.");
             }
-            return Image(std::make_shared<ImageFrame>(
-                std::move(*CreateImageFrame<uint16>(format, data).release())));
+            return Image(std::shared_ptr<ImageFrame>(
+                CreateImageFrame<uint16>(format, data)));
           }),
           R"doc(For uint16 data type, valid ImageFormat are GRAY16, SRGB48, and SRGBA64.)doc",
           py::arg("image_format"), py::arg("data").noconvert())
@@ -115,8 +119,8 @@ void ImageSubmodule(pybind11::module* module) {
                   "float image data should be either VEC32F1 or VEC32F2 "
                   "MediaPipe image formats.");
             }
-            return Image(std::make_shared<ImageFrame>(
-                std::move(*CreateImageFrame<float>(format, data).release())));
+            return Image(std::shared_ptr<ImageFrame>(
+                CreateImageFrame<float>(format, data)));
           }),
           R"doc(For float data type, valid ImageFormat are VEC32F1 and VEC32F2.)doc",
           py::arg("image_format"), py::arg("data").noconvert());
@@ -222,6 +226,62 @@ void ImageSubmodule(pybind11::module* module) {
   Examples:
     image.is_aligned(16)
 )doc");
+
+  image.def_static(
+      "create_from_file",
+      [](const std::string& file_name) {
+        int width;
+        int height;
+        int channels;
+        auto* image_data =
+            stbi_load(file_name.c_str(), &width, &height, &channels,
+                      /*desired_channels=*/0);
+        if (image_data == nullptr) {
+          throw RaisePyError(PyExc_RuntimeError,
+                             absl::StrFormat("Image decoding failed (%s): %s",
+                                             stbi_failure_reason(), file_name)
+                                 .c_str());
+        }
+        ImageFrameSharedPtr image_frame;
+        switch (channels) {
+          case 1:
+            image_frame = std::make_shared<ImageFrame>(
+                ImageFormat::GRAY8, width, height, width, image_data,
+                stbi_image_free);
+            break;
+          case 3:
+            image_frame = std::make_shared<ImageFrame>(
+                ImageFormat::SRGB, width, height, 3 * width, image_data,
+                stbi_image_free);
+            break;
+          case 4:
+            image_frame = std::make_shared<ImageFrame>(
+                ImageFormat::SRGBA, width, height, 4 * width, image_data,
+                stbi_image_free);
+            break;
+          default:
+            throw RaisePyError(
+                PyExc_RuntimeError,
+                absl::StrFormat(
+                    "Expected image with 1 (grayscale), 3 (RGB) or 4 "
+                    "(RGBA) channels, found %d channels.",
+                    channels)
+                    .c_str());
+        }
+        return Image(std::move(image_frame));
+      },
+      R"doc(Creates `Image` object from the image file.
+
+Args:
+  file_name: Image file name.
+
+Returns:
+  `Image` object.
+
+Raises:
+  RuntimeError if the image file can't be decoded.
+  )doc",
+      py::arg("file_name"));
 
   image.def_property_readonly("width", &Image::width)
       .def_property_readonly("height", &Image::height)

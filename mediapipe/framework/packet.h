@@ -21,7 +21,6 @@
 #include <memory>
 #include <string>
 #include <type_traits>
-#include <typeinfo>
 
 #include "absl/base/macros.h"
 #include "absl/memory/memory.h"
@@ -69,7 +68,7 @@ absl::StatusOr<Packet> PacketFromDynamicProto(const std::string& type_name,
 // The preferred method of creating a Packet is with MakePacket<T>().
 // The Packet typically owns the object that it contains, but
 // PointToForeign allows a Packet to be constructed which does not
-// own it's data.
+// own its data.
 //
 // This class is thread compatible.
 class Packet {
@@ -180,7 +179,7 @@ class Packet {
   // Returns an error if the packet does not contain data of type T.
   template <typename T>
   absl::Status ValidateAsType() const {
-    return ValidateAsType(tool::TypeId<T>());
+    return ValidateAsType(kTypeId<T>);
   }
 
   // Returns an error if the packet is not an instance of
@@ -189,7 +188,7 @@ class Packet {
 
   // Get the type id for the underlying type stored in the Packet.
   // Crashes if IsEmpty() == true.
-  size_t GetTypeId() const;
+  TypeId GetTypeId() const;
 
   // Returns the timestamp.
   class Timestamp Timestamp() const;
@@ -201,9 +200,9 @@ class Packet {
 
   // Returns the type name.  If the packet is empty or the type is not
   // registered (with MEDIAPIPE_REGISTER_TYPE or companion macros) then
-  // the empty std::string is returned.
+  // the empty string is returned.
   std::string RegisteredTypeName() const;
-  // Returns a std::string with the best guess at the type name.
+  // Returns a string with the best guess at the type name.
   std::string DebugTypeName() const;
 
  private:
@@ -220,7 +219,8 @@ class Packet {
   friend std::shared_ptr<packet_internal::HolderBase>
   packet_internal::GetHolderShared(Packet&& packet);
 
-  absl::Status ValidateAsType(const tool::TypeInfo& type_info) const;
+  friend class PacketType;
+  absl::Status ValidateAsType(TypeId type_id) const;
 
   std::shared_ptr<packet_internal::HolderBase> holder_;
   class Timestamp timestamp_;
@@ -364,15 +364,15 @@ class HolderBase {
   virtual ~HolderBase();
   template <typename T>
   bool PayloadIsOfType() const {
-    return GetTypeId() == tool::GetTypeHash<T>();
+    return GetTypeId() == kTypeId<T>;
   }
-  // Returns a printable std::string identifying the type stored in the holder.
+  // Returns a printable string identifying the type stored in the holder.
   virtual const std::string DebugTypeName() const = 0;
   // Returns the registered type name if it's available, otherwise the
-  // empty std::string.
+  // empty string.
   virtual const std::string RegisteredTypeName() const = 0;
   // Get the type id of the underlying data type.
-  virtual size_t GetTypeId() const = 0;
+  virtual TypeId GetTypeId() const = 0;
   // Downcasts this to Holder<T>.  Returns nullptr if deserialization
   // failed or if the requested type is not what is stored.
   template <typename T>
@@ -423,7 +423,7 @@ StatusOr<std::vector<const proto_ns::MessageLite*>>
 ConvertToVectorOfProtoMessageLitePtrs(const T* data,
                                       /*is_proto_vector=*/std::false_type) {
   return absl::InvalidArgumentError(absl::StrCat(
-      "The Packet stores \"", tool::TypeId<T>().name(), "\"",
+      "The Packet stores \"", kTypeId<T>.name(), "\"",
       "which is not convertible to vector<proto_ns::MessageLite*>."));
 }
 
@@ -440,7 +440,7 @@ ConvertToVectorOfProtoMessageLitePtrs(const T* data,
 }
 
 // This registry is used to create Holders of the right concrete C++ type given
-// a proto type std::string (which is used as the registration key).
+// a proto type string (which is used as the registration key).
 class MessageHolderRegistry
     : public GlobalFactoryRegistry<std::unique_ptr<HolderBase>> {};
 
@@ -505,7 +505,7 @@ class Holder : public HolderBase {
     HolderSupport<T>::EnsureStaticInit();
     return *ptr_;
   }
-  size_t GetTypeId() const final { return tool::GetTypeHash<T>(); }
+  TypeId GetTypeId() const final { return kTypeId<T>; }
   // Releases the underlying data pointer and transfers the ownership to a
   // unique pointer.
   // This method is dangerous and is only used by Packet::Consume() if the
@@ -741,7 +741,7 @@ inline Packet& Packet::operator=(Packet&& packet) {
 
 inline bool Packet::IsEmpty() const { return holder_ == nullptr; }
 
-inline size_t Packet::GetTypeId() const {
+inline TypeId Packet::GetTypeId() const {
   CHECK(holder_);
   return holder_->GetTypeId();
 }

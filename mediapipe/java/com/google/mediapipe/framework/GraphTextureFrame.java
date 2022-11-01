@@ -27,14 +27,22 @@ public class GraphTextureFrame implements TextureFrame {
   private int width;
   private int height;
   private long timestamp = Long.MIN_VALUE;
+  // True when created with PacketGetter.getTextureFrameDeferredSync(). This will result in gpuWait
+  // when calling getTextureName().
+  private final boolean deferredSync;
 
   GraphTextureFrame(long nativeHandle, long timestamp) {
+    this(nativeHandle, timestamp, false);
+  }
+
+  GraphTextureFrame(long nativeHandle, long timestamp, boolean deferredSync) {
     nativeBufferHandle = nativeHandle;
     // TODO: use a single JNI call to fill in all info
     textureName = nativeGetTextureName(nativeBufferHandle);
     width = nativeGetWidth(nativeBufferHandle);
     height = nativeGetHeight(nativeBufferHandle);
     this.timestamp = timestamp;
+    this.deferredSync = deferredSync;
   }
 
   /**
@@ -42,13 +50,22 @@ public class GraphTextureFrame implements TextureFrame {
    *
    * <p>Note: if this texture has been obtained using getTextureFrameDeferredWait, a GPU wait on the
    * producer sync will be done here. That means this method should be called on the GL context that
-   * will actually use the texture.
+   * will actually use the texture. Note that in this case, it is also susceptible to a race
+   * condition if release() is called after the if-check for nativeBufferHandle is already passed.
    */
   @Override
   public int getTextureName() {
-    // Note that, if a CPU wait has already been done, the sync point will have been
-    // cleared and this will turn into a no-op. See GlFenceSyncPoint::Wait.
-    nativeGpuWait(nativeBufferHandle);
+    // Return special texture id 0 if handle is 0 i.e. frame is already released.
+    if (nativeBufferHandle == 0) {
+      return 0;
+    }
+    // Gpu wait only if deferredSync is true, such as when this GraphTextureFrame is created using
+    // PacketGetter.getTextureFrameDeferredSync().
+    if (deferredSync) {
+      // Note that, if a CPU wait has already been done, the sync point will have been
+      // cleared and this will turn into a no-op. See GlFenceSyncPoint::Wait.
+      nativeGpuWait(nativeBufferHandle);
+    }
     return textureName;
   }
 
@@ -76,10 +93,9 @@ public class GraphTextureFrame implements TextureFrame {
    */
   @Override
   public void release() {
-    if (nativeBufferHandle != 0) {
-      nativeReleaseBuffer(nativeBufferHandle);
-      nativeBufferHandle = 0;
-    }
+    GlSyncToken consumerToken =
+        new GraphGlSyncToken(nativeCreateSyncTokenForCurrentExternalContext(nativeBufferHandle));
+    release(consumerToken);
   }
 
   /**
@@ -92,15 +108,24 @@ public class GraphTextureFrame implements TextureFrame {
    * currently cannot create a GlSyncToken, so they cannot call this method.
    */
   @Override
-  public void release(GlSyncToken syncToken) {
-    syncToken.release();
-    release();
+  public void release(GlSyncToken consumerSyncToken) {
+    if (nativeBufferHandle != 0) {
+      long token = consumerSyncToken == null ? 0 : consumerSyncToken.nativeToken();
+      nativeReleaseBuffer(nativeBufferHandle, token);
+      nativeBufferHandle = 0;
+    }
+    if (consumerSyncToken != null) {
+      consumerSyncToken.release();
+    }
   }
 
-  private native void nativeReleaseBuffer(long nativeHandle);
+  private native void nativeReleaseBuffer(long nativeHandle, long consumerSyncToken);
+
   private native int nativeGetTextureName(long nativeHandle);
   private native int nativeGetWidth(long nativeHandle);
   private native int nativeGetHeight(long nativeHandle);
 
   private native void nativeGpuWait(long nativeHandle);
+
+  private native long nativeCreateSyncTokenForCurrentExternalContext(long nativeHandle);
 }

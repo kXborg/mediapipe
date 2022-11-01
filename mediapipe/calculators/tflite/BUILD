@@ -121,10 +121,11 @@ cc_library(
     deps = [
         ":tflite_custom_op_resolver_calculator_cc_proto",
         "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/api2:packet",
         "//mediapipe/framework/port:ret_check",
-        "//mediapipe/framework/port:status",
         "//mediapipe/util/tflite:cpu_op_resolver",
         "//mediapipe/util/tflite:op_resolver",
+        "@org_tensorflow//tensorflow/lite/core/api:op_resolver",
     ],
     alwayslink = 1,
 )
@@ -134,6 +135,7 @@ filegroup(
     srcs = [
         "testdata/anchor_golden_file_0.txt",
         "testdata/anchor_golden_file_1.txt",
+        "testdata/anchor_golden_file_2.txt",
     ],
 )
 
@@ -329,6 +331,7 @@ cc_library(
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework:packet",
         "//mediapipe/framework/port:ret_check",
+        "@com_google_absl//absl/status",
         "@org_tensorflow//tensorflow/lite:framework",
     ],
     alwayslink = 1,

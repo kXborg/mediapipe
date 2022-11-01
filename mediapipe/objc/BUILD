@@ -11,6 +11,7 @@ cc_library(
         "//mediapipe:apple": ["CFHolder.h"],
         "//conditions:default": [],
     }),
+    features = ["layering_check"],
     visibility = ["//mediapipe/framework:mediapipe_internal"],
 )
 
@@ -18,7 +19,10 @@ cc_library(
     name = "util",
     srcs = ["util.cc"],
     hdrs = ["util.h"],
-    features = ["-parse_headers"],
+    features = [
+        "-parse_headers",
+        "layering_check",
+    ],
     linkopts = [
         "-framework Accelerate",
         "-framework CoreFoundation",
@@ -63,13 +67,10 @@ objc_library(
     hdrs = MEDIAPIPE_IOS_HDRS,
     copts = [
         "-Wno-shorten-64-to-32",
-        "-std=c++17",
     ],
-    sdk_frameworks = [
-        # Needed for OpenCV.
-        "Accelerate",
-    ],
-    visibility = ["//mediapipe/framework:mediapipe_internal"],
+    sdk_frameworks = ["Accelerate"],
+    # This build rule is public to allow external customers to build their own iOS apps.
+    visibility = ["//visibility:public"],
     deps = [
         ":CFHolder",
         ":util",
@@ -120,9 +121,12 @@ objc_library(
         "//conditions:default": [],
     }),
     sdk_frameworks = [
+        "AVFoundation",
         "CoreVideo",
+        "Foundation",
     ],
-    visibility = ["//mediapipe/framework:mediapipe_internal"],
+    # This build rule is public to allow external customers to build their own iOS apps.
+    visibility = ["//visibility:public"],
 )
 
 objc_library(
@@ -135,7 +139,10 @@ objc_library(
     ],
     copts = [
         "-Wno-shorten-64-to-32",
-        "-std=c++17",
+    ],
+    sdk_frameworks = [
+        "Foundation",
+        "GLKit",
     ],
     visibility = ["//mediapipe/framework:mediapipe_internal"],
     deps = [
@@ -157,7 +164,12 @@ objc_library(
     copts = [
         "-Wno-shorten-64-to-32",
     ],
-    visibility = ["//mediapipe/framework:mediapipe_internal"],
+    sdk_frameworks = [
+        "Foundation",
+        "GLKit",
+    ],
+    # This build rule is public to allow external customers to build their own iOS apps.
+    visibility = ["//visibility:public"],
     deps = [
         ":mediapipe_framework_ios",
         ":mediapipe_gl_view_renderer",
@@ -175,10 +187,10 @@ objc_library(
     ],
     copts = [
         "-Wno-shorten-64-to-32",
-        "-std=c++17",
     ],
     sdk_frameworks = [
         "CoreVideo",
+        "Foundation",
     ],
     visibility = ["//mediapipe/framework:mediapipe_internal"],
     deps = [
@@ -198,14 +210,13 @@ objc_library(
     ],
     copts = [
         "-Wno-shorten-64-to-32",
-        "-std=c++17",
     ],
     sdk_frameworks = [
-        "Accelerate",
         "AVFoundation",
-        "CoreVideo",
+        "Accelerate",
         "CoreGraphics",
         "CoreMedia",
+        "CoreVideo",
         "GLKit",
         "OpenGLES",
         "QuartzCore",
@@ -230,17 +241,16 @@ objc_library(
     ],
     copts = [
         "-Wno-shorten-64-to-32",
-        "-std=c++17",
     ],
     data = [
         "testdata/googlelogo_color_272x92dp.png",
     ],
     sdk_frameworks = [
-        "Accelerate",
         "AVFoundation",
-        "CoreVideo",
+        "Accelerate",
         "CoreGraphics",
         "CoreMedia",
+        "CoreVideo",
         "GLKit",
         "QuartzCore",
         "UIKit",

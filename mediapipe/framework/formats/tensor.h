@@ -16,7 +16,9 @@
 #define MEDIAPIPE_FRAMEWORK_FORMATS_TENSOR_H_
 
 #include <algorithm>
+#include <functional>
 #include <initializer_list>
+#include <numeric>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -29,7 +31,19 @@
 #if MEDIAPIPE_METAL_ENABLED
 #import <Metal/Metal.h>
 #endif  // MEDIAPIPE_METAL_ENABLED
+#ifndef MEDIAPIPE_NO_JNI
+#if __ANDROID_API__ >= 26 || defined(__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__)
+#define MEDIAPIPE_TENSOR_USE_AHWB 1
+#endif  // __ANDROID_API__ >= 26 ||
+        // defined(__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__)
+#endif  // MEDIAPIPE_NO_JNI
 
+#ifdef MEDIAPIPE_TENSOR_USE_AHWB
+#include <android/hardware_buffer.h>
+
+#include "third_party/GL/gl/include/EGL/egl.h"
+#include "third_party/GL/gl/include/EGL/eglext.h"
+#endif  // MEDIAPIPE_TENSOR_USE_AHWB
 #if MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_30
 #include "mediapipe/gpu/gl_base.h"
 #include "mediapipe/gpu/gl_context.h"
@@ -76,20 +90,39 @@ class Tensor {
 
  public:
   // No resources are allocated here.
-  enum class ElementType { kNone, kFloat16, kFloat32 };
+  enum class ElementType {
+    kNone,
+    kFloat16,
+    kFloat32,
+    kUInt8,
+    kInt8,
+    kInt32,
+    kChar,
+    kBool
+  };
   struct Shape {
     Shape() = default;
     Shape(std::initializer_list<int> dimensions) : dims(dimensions) {}
     Shape(const std::vector<int>& dimensions) : dims(dimensions) {}
     int num_elements() const {
-      int res = dims.empty() ? 0 : 1;
-      std::for_each(dims.begin(), dims.end(), [&res](int i) { res *= i; });
-      return res;
+      return std::accumulate(dims.begin(), dims.end(), 1,
+                             std::multiplies<int>());
     }
     std::vector<int> dims;
   };
+  // Quantization parameters corresponding to the zero_point and scale value
+  // made available by TfLite quantized (uint8/int8) tensors.
+  struct QuantizationParameters {
+    QuantizationParameters() = default;
+    QuantizationParameters(float scale, int zero_point)
+        : scale(scale), zero_point(zero_point) {}
+    float scale = 1.0f;
+    int zero_point = 0;
+  };
 
   Tensor(ElementType element_type, const Shape& shape);
+  Tensor(ElementType element_type, const Shape& shape,
+         const QuantizationParameters& quantization_parameters);
 
   // Non-copyable.
   Tensor(const Tensor&) = delete;
@@ -108,15 +141,23 @@ class Tensor {
       return static_cast<typename std::tuple_element<
           std::is_const<T>::value, std::tuple<P*, const P*> >::type>(buffer_);
     }
-    CpuView(CpuView&& src) : View(std::move(src)), buffer_(src.buffer_) {
-      src.buffer_ = nullptr;
+    CpuView(CpuView&& src) : View(std::move(src)) {
+      buffer_ = std::exchange(src.buffer_, nullptr);
+      release_callback_ = std::exchange(src.release_callback_, nullptr);
+    }
+    ~CpuView() {
+      if (release_callback_) release_callback_();
     }
 
    protected:
     friend class Tensor;
-    CpuView(T* buffer, std::unique_ptr<absl::MutexLock>&& lock)
-        : View(std::move(lock)), buffer_(buffer) {}
+    CpuView(T* buffer, std::unique_ptr<absl::MutexLock>&& lock,
+            std::function<void()> release_callback = nullptr)
+        : View(std::move(lock)),
+          buffer_(buffer),
+          release_callback_(release_callback) {}
     T* buffer_;
+    std::function<void()> release_callback_;
   };
   using CpuReadView = CpuView<const void>;
   CpuReadView GetCpuReadView() const;
@@ -149,6 +190,62 @@ class Tensor {
   // TODO: GPU-to-CPU design considerations.
   MtlBufferView GetMtlBufferWriteView(id<MTLDevice> device) const;
 #endif  // MEDIAPIPE_METAL_ENABLED
+
+#ifdef MEDIAPIPE_TENSOR_USE_AHWB
+  using FinishingFunc = std::function<bool(bool)>;
+  class AHardwareBufferView : public View {
+   public:
+    AHardwareBuffer* handle() const { return handle_; }
+    AHardwareBufferView(AHardwareBufferView&& src) : View(std::move(src)) {
+      handle_ = std::exchange(src.handle_, nullptr);
+      file_descriptor_ = src.file_descriptor_;
+      fence_fd_ = std::exchange(src.fence_fd_, nullptr);
+      ahwb_written_ = std::exchange(src.ahwb_written_, nullptr);
+      release_callback_ = std::exchange(src.release_callback_, nullptr);
+    }
+    int file_descriptor() const { return file_descriptor_; }
+    void SetReadingFinishedFunc(FinishingFunc&& func) {
+      CHECK(ahwb_written_)
+          << "AHWB write view can't accept 'reading finished callback'";
+      *ahwb_written_ = std::move(func);
+    }
+    void SetWritingFinishedFD(int fd, FinishingFunc func = nullptr) {
+      CHECK(fence_fd_)
+          << "AHWB read view can't accept 'writing finished file descriptor'";
+      *fence_fd_ = fd;
+      *ahwb_written_ = std::move(func);
+    }
+    // The function is called when the tensor is released.
+    void SetReleaseCallback(std::function<void()> callback) {
+      *release_callback_ = std::move(callback);
+    }
+
+   protected:
+    friend class Tensor;
+    AHardwareBufferView(AHardwareBuffer* handle, int file_descriptor,
+                        int* fence_fd, FinishingFunc* ahwb_written,
+                        std::function<void()>* release_callback,
+                        std::unique_ptr<absl::MutexLock>&& lock)
+        : View(std::move(lock)),
+          handle_(handle),
+          file_descriptor_(file_descriptor),
+          fence_fd_(fence_fd),
+          ahwb_written_(ahwb_written),
+          release_callback_(release_callback) {}
+    AHardwareBuffer* handle_;
+    int file_descriptor_;
+    // The view sets some Tensor's fields. The view is released prior to tensor.
+    int* fence_fd_;
+    FinishingFunc* ahwb_written_;
+    std::function<void()>* release_callback_;
+  };
+  AHardwareBufferView GetAHardwareBufferReadView() const;
+  // size_alignment is an optional argument to tell the API to allocate
+  // a buffer that is padded to multiples of size_alignment bytes.
+  // size_alignment must be power of 2, i.e. 2, 4, 8, 16, 64, etc.
+  // If size_alignment is 0, then the buffer will not be padded.
+  AHardwareBufferView GetAHardwareBufferWriteView(int size_alignment = 0) const;
+#endif  // MEDIAPIPE_TENSOR_USE_AHWB
 
 #if MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_30
   // TODO: Use GlTextureView instead.
@@ -188,16 +285,23 @@ class Tensor {
   class OpenGlBufferView : public View {
    public:
     GLuint name() const { return name_; }
-    OpenGlBufferView(OpenGlBufferView&& src)
-        : View(std::move(src)), name_(src.name_) {
-      src.name_ = GL_INVALID_INDEX;
+    OpenGlBufferView(OpenGlBufferView&& src) : View(std::move(src)) {
+      name_ = std::exchange(src.name_, GL_INVALID_INDEX);
+      ssbo_read_ = std::exchange(src.ssbo_read_, nullptr);
+    }
+    ~OpenGlBufferView() {
+      if (ssbo_read_) {
+        *ssbo_read_ = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+      }
     }
 
    protected:
     friend class Tensor;
-    OpenGlBufferView(GLuint name, std::unique_ptr<absl::MutexLock>&& lock)
-        : View(std::move(lock)), name_(name) {}
+    OpenGlBufferView(GLuint name, std::unique_ptr<absl::MutexLock>&& lock,
+                     GLsync* ssbo_read)
+        : View(std::move(lock)), name_(name), ssbo_read_(ssbo_read) {}
     GLuint name_;
+    GLsync* ssbo_read_;
   };
   // A valid OpenGL context must be bound to the calling thread due to possible
   // GPU resource allocation.
@@ -207,6 +311,9 @@ class Tensor {
 
   const Shape& shape() const { return shape_; }
   ElementType element_type() const { return element_type_; }
+  const QuantizationParameters& quantization_parameters() const {
+    return quantization_parameters_;
+  }
   int element_size() const {
     switch (element_type_) {
       case ElementType::kNone:
@@ -215,20 +322,41 @@ class Tensor {
         return 2;
       case ElementType::kFloat32:
         return sizeof(float);
+      case ElementType::kUInt8:
+        return 1;
+      case ElementType::kInt8:
+        return 1;
+      case ElementType::kInt32:
+        return sizeof(int32_t);
+      case ElementType::kChar:
+        return sizeof(char);
+      case ElementType::kBool:
+        return sizeof(bool);
     }
   }
   int bytes() const { return shape_.num_elements() * element_size(); }
 
-  bool ready_on_cpu() const { return valid_ & kValidCpu; }
+  bool ready_on_cpu() const {
+    return valid_ & (kValidAHardwareBuffer | kValidCpu);
+  }
   bool ready_on_gpu() const {
-    return valid_ &
-           (kValidMetalBuffer | kValidOpenGlBuffer | kValidOpenGlTexture2d);
+    return valid_ & (kValidMetalBuffer | kValidOpenGlBuffer |
+                     kValidAHardwareBuffer | kValidOpenGlTexture2d);
   }
   bool ready_as_metal_buffer() const { return valid_ & kValidMetalBuffer; }
-  bool ready_as_opengl_buffer() const { return valid_ & kValidOpenGlBuffer; }
+  bool ready_as_opengl_buffer() const {
+    return valid_ & (kValidAHardwareBuffer | kValidOpenGlBuffer);
+  }
   bool ready_as_opengl_texture_2d() const {
     return valid_ & kValidOpenGlTexture2d;
   }
+  // Sets the type of underlying resource that is going to be allocated.
+  enum class StorageType {
+    kDefault,
+    kAhwb,
+  };
+  static void SetPreferredStorageType(StorageType type);
+  static StorageType GetPreferredStorageType();
 
  private:
   void Move(Tensor*);
@@ -236,6 +364,7 @@ class Tensor {
 
   ElementType element_type_;
   Shape shape_;
+  QuantizationParameters quantization_parameters_;
 
   // The flags describe the current source of truth resource type.
   enum {
@@ -244,6 +373,7 @@ class Tensor {
     kValidMetalBuffer = 1 << 1,
     kValidOpenGlBuffer = 1 << 2,
     kValidOpenGlTexture2d = 1 << 3,
+    kValidAHardwareBuffer = 1 << 5,
   };
   // A list of resource which are currently allocated and synchronized between
   // each-other: valid_ = kValidCpu | kValidMetalBuffer;
@@ -259,6 +389,36 @@ class Tensor {
   mutable id<MTLBuffer> metal_buffer_;
   void AllocateMtlBuffer(id<MTLDevice> device) const;
 #endif  // MEDIAPIPE_METAL_ENABLED
+
+#ifdef MEDIAPIPE_TENSOR_USE_AHWB
+  mutable AHardwareBuffer* ahwb_ = nullptr;
+  // Signals when GPU finished writing into SSBO so AHWB can be used then. Or
+  // signals when writing into AHWB has been finished so GPU can read from SSBO.
+  // Sync and FD are bound together.
+  mutable EGLSyncKHR fence_sync_ = EGL_NO_SYNC_KHR;
+  // This FD signals when the writing into the SSBO has been finished.
+  mutable int ssbo_written_ = -1;
+  // An externally set FD that is wrapped with the EGL sync then to synchronize
+  // AHWB -> OpenGL SSBO.
+  mutable int fence_fd_ = -1;
+  // Reading from SSBO has been finished so SSBO can be released.
+  mutable GLsync ssbo_read_ = 0;
+  // An externally set function that signals when it is safe to release AHWB.
+  // If the input parameter is 'true' then wait for the writing to be finished.
+  mutable FinishingFunc ahwb_written_;
+  mutable std::function<void()> release_callback_;
+  bool AllocateAHardwareBuffer(int size_alignment = 0) const;
+  void CreateEglSyncAndFd() const;
+  // Use Ahwb for other views: OpenGL / CPU buffer.
+  static inline bool use_ahwb_ = false;
+#endif  // MEDIAPIPE_TENSOR_USE_AHWB
+  // Expects the target SSBO to be already bound.
+  bool AllocateAhwbMapToSsbo() const;
+  bool InsertAhwbToSsboFence() const;
+  void MoveAhwbStuff(Tensor* src);
+  void ReleaseAhwbStuff();
+  void* MapAhwbToCpuRead() const;
+  void* MapAhwbToCpuWrite() const;
 
 #if MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_30
   mutable std::shared_ptr<mediapipe::GlContext> gl_context_;
@@ -277,6 +437,11 @@ class Tensor {
   bool NeedsHalfFloatRenderTarget() const;
 #endif  // MEDIAPIPE_OPENGL_ES_VERSION >= MEDIAPIPE_OPENGL_ES_30
 };
+
+int BhwcBatchFromShape(const Tensor::Shape& shape);
+int BhwcHeightFromShape(const Tensor::Shape& shape);
+int BhwcWidthFromShape(const Tensor::Shape& shape);
+int BhwcDepthFromShape(const Tensor::Shape& shape);
 
 }  // namespace mediapipe
 

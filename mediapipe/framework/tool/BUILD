@@ -43,6 +43,7 @@ bzl_library(
         "//mediapipe/framework:transitive_protos_bzl",
         "//mediapipe/framework/deps:descriptor_set_bzl",
         "//mediapipe/framework/deps:expand_template_bzl",
+        "@org_tensorflow//tensorflow/lite/core/shims:cc_library_with_tflite_bzl",
     ],
 )
 
@@ -52,6 +53,8 @@ bzl_library(
         "build_defs.bzl",
     ],
     visibility = [
+        "//mediapipe/app/pursuit/wasm:__subpackages__",
+        "//mediapipe/app/xeno/catalog:__subpackages__",
         "//mediapipe/framework:__subpackages__",
     ],
 )
@@ -132,7 +135,7 @@ cc_library(
     name = "name_util",
     srcs = ["name_util.cc"],
     hdrs = ["name_util.h"],
-    visibility = ["//mediapipe/framework:mediapipe_internal"],
+    visibility = ["//visibility:public"],
     deps = [
         ":validate_name",
         "//mediapipe/framework:calculator_cc_proto",
@@ -147,7 +150,7 @@ cc_library(
     name = "executor_util",
     srcs = ["executor_util.cc"],
     hdrs = ["executor_util.h"],
-    visibility = ["//mediapipe/framework:mediapipe_internal"],
+    visibility = ["//visibility:public"],
     deps = [
         "//mediapipe/framework:calculator_cc_proto",
         "//mediapipe/framework:mediapipe_options_cc_proto",
@@ -196,6 +199,7 @@ cc_library(
         ":name_util",
         ":options_registry",
         ":proto_util_lite",
+        ":type_util",
         "//mediapipe/framework:calculator_cc_proto",
         "//mediapipe/framework:packet",
         "//mediapipe/framework:packet_type",
@@ -275,9 +279,12 @@ cc_library(
     hdrs = ["options_registry.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":field_data_cc_proto",
+        ":proto_util_lite",
         "//mediapipe/framework/deps:registration",
         "//mediapipe/framework/port:advanced_proto",
         "//mediapipe/framework/port:logging",
+        "//mediapipe/framework/port:ret_check",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
     ],
@@ -286,6 +293,7 @@ cc_library(
 mediapipe_cc_test(
     name = "options_util_test",
     size = "small",
+    timeout = "moderate",
     srcs = ["options_util_test.cc"],
     # A non-empty "data" param is needed to build the "_test_wasm" target.
     data = [":node_chain_subgraph.proto"],
@@ -331,6 +339,7 @@ cc_library(
     hdrs = ["proto_util_lite.h"],
     visibility = ["//visibility:public"],
     deps = [
+        ":field_data_cc_proto",
         "//mediapipe/framework:type_map",
         "//mediapipe/framework/port:advanced_proto_lite",
         "//mediapipe/framework/port:integral_types",
@@ -515,9 +524,11 @@ cc_library(
 cc_library(
     name = "type_util",
     hdrs = ["type_util.h"],
-    visibility = ["//mediapipe/framework:mediapipe_internal"],
+    visibility = ["//visibility:public"],
     deps = [
+        "//mediapipe/framework:demangle",
         "//mediapipe/framework:port",
+        "@com_google_absl//absl/base:core_headers",
     ],
 )
 
@@ -761,6 +772,7 @@ cc_library(
         "//mediapipe/framework/port:logging",
         "//mediapipe/framework/port:ret_check",
         "//mediapipe/framework/port:status",
+        "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
@@ -809,6 +821,19 @@ cc_library(
     alwayslink = 1,
 )
 
+mediapipe_cc_test(
+    name = "switch_demux_calculator_test",
+    srcs = ["switch_demux_calculator_test.cc"],
+    deps = [
+        ":container_util",
+        ":switch_demux_calculator",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:logging",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
 cc_library(
     name = "switch_mux_calculator",
     srcs = ["switch_mux_calculator.cc"],
@@ -817,22 +842,38 @@ cc_library(
     ],
     deps = [
         ":container_util",
-        ":options_util",
         "//mediapipe/framework:calculator_framework",
         "//mediapipe/framework:collection_item_id",
         "//mediapipe/framework:input_stream_shard",
         "//mediapipe/framework:output_stream_shard",
-        "//mediapipe/framework/deps:mathutil",
-        "//mediapipe/framework/formats:video_stream_header",
         "//mediapipe/framework/port:integral_types",
         "//mediapipe/framework/port:logging",
         "//mediapipe/framework/port:ret_check",
         "//mediapipe/framework/port:status",
         "//mediapipe/framework/stream_handler:immediate_input_stream_handler",
         "//mediapipe/framework/tool:switch_container_cc_proto",
-        "@com_google_absl//absl/strings",
     ],
     alwayslink = 1,
+)
+
+mediapipe_cc_test(
+    name = "switch_mux_calculator_test",
+    srcs = ["switch_mux_calculator_test.cc"],
+    deps = [
+        ":container_util",
+        ":switch_mux_calculator",
+        "//mediapipe/calculators/core:pass_through_calculator",
+        "//mediapipe/framework:calculator_cc_proto",
+        "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:subgraph",
+        "//mediapipe/framework/port:gtest_main",
+        "//mediapipe/framework/port:logging",
+        "//mediapipe/framework/port:parse_text_proto",
+        "//mediapipe/framework/port:ret_check",
+        "//mediapipe/framework/port:status",
+        "//mediapipe/framework/stream_handler:immediate_input_stream_handler",
+        "@com_google_absl//absl/strings",
+    ],
 )
 
 mediapipe_proto_library(
@@ -855,15 +896,17 @@ cc_library(
         ":subgraph_expansion",
         ":switch_demux_calculator",
         ":switch_mux_calculator",
+        "//mediapipe/calculators/core:packet_sequencer_calculator",
         "//mediapipe/framework:calculator_cc_proto",
         "//mediapipe/framework:calculator_framework",
-        "//mediapipe/framework:mediapipe_options_cc_proto",
-        "//mediapipe/framework:stream_handler_cc_proto",
+        "//mediapipe/framework:calculator_options_cc_proto",
         "//mediapipe/framework:subgraph",
+        "//mediapipe/framework/deps:registration",
+        "//mediapipe/framework/port:core_proto",
         "//mediapipe/framework/port:ret_check",
         "//mediapipe/framework/port:status",
-        "//mediapipe/framework/stream_handler:sync_set_input_stream_handler_cc_proto",
         "//mediapipe/framework/tool:switch_container_cc_proto",
+        "@com_google_absl//absl/strings",
     ],
     alwayslink = 1,
 )
@@ -880,6 +923,7 @@ cc_test(
         "//mediapipe/calculators/core:pass_through_calculator",
         "//mediapipe/framework:calculator_cc_proto",
         "//mediapipe/framework:calculator_framework",
+        "//mediapipe/framework:stream_handler_cc_proto",
         "//mediapipe/framework:subgraph",
         "//mediapipe/framework:test_calculators",
         "//mediapipe/framework/port:gtest_main",

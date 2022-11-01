@@ -26,7 +26,7 @@ MediaPipe Face Detection is an ultrafast face detection solution that comes with
 face detector tailored for mobile GPU inference. The detector's super-realtime
 performance enables it to be applied to any live viewfinder experience that
 requires an accurate facial region of interest as an input for other
-task-specific models, such as 3D facial keypoint or geometry estimation (e.g.,
+task-specific models, such as 3D facial keypoint estimation (e.g.,
 [MediaPipe Face Mesh](./face_mesh.md)), facial features or expression
 classification, and face region segmentation. BlazeFace uses a lightweight
 feature extraction network inspired by, but distinct from
@@ -37,7 +37,7 @@ improved tie resolution strategy alternative to non-maximum suppression. For
 more information about BlazeFace, please see the [Resources](#resources)
 section.
 
-![face_detection_android_gpu.gif](../images/mobile/face_detection_android_gpu.gif)
+![face_detection_android_gpu.gif](https://mediapipe.dev/images/mobile/face_detection_android_gpu.gif)
 
 ## Solution APIs
 

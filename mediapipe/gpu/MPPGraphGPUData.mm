@@ -40,8 +40,8 @@ typedef CVOpenGLTextureCacheRef CVTextureCacheType;
 typedef CVOpenGLESTextureCacheRef CVTextureCacheType;
 #endif  // TARGET_OS_OSX
 
-- (instancetype)initWithContext:(mediapipe::GlContext*)context
-                      multiPool:(mediapipe::GpuBufferMultiPool*)pool {
+- (instancetype)initWithContext:(mediapipe::GlContext *)context
+                      multiPool:(mediapipe::GpuBufferMultiPool *)pool {
   self = [super init];
   if (self) {
     _gpuBufferPool = pool;
@@ -111,7 +111,8 @@ typedef CVOpenGLESTextureCacheRef CVTextureCacheType;
 - (CVMetalTextureCacheRef)mtlTextureCache {
   @synchronized(self) {
     if (!_mtlTextureCache) {
-      CVReturn err = CVMetalTextureCacheCreate(NULL, NULL, self.mtlDevice, NULL, &_mtlTextureCache);
+      CVReturn __unused err =
+          CVMetalTextureCacheCreate(NULL, NULL, self.mtlDevice, NULL, &_mtlTextureCache);
       NSAssert(err == kCVReturnSuccess, @"Error at CVMetalTextureCacheCreate %d", err);
       // TODO: register and flush metal caches too.
     }

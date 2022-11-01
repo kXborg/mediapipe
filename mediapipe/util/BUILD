@@ -36,6 +36,12 @@ mediapipe_proto_library(
 )
 
 mediapipe_proto_library(
+    name = "label_map_proto",
+    srcs = ["label_map.proto"],
+    visibility = ["//visibility:public"],
+)
+
+mediapipe_proto_library(
     name = "render_data_proto",
     srcs = ["render_data.proto"],
     visibility = ["//visibility:public"],
@@ -125,6 +131,21 @@ cc_library(
 )
 
 cc_library(
+    name = "label_map_util",
+    srcs = ["label_map_util.cc"],
+    hdrs = ["label_map_util.h"],
+    visibility = ["//visibility:public"],
+    deps = [
+        ":label_map_cc_proto",
+        "//mediapipe/framework/port:core_proto",
+        "//mediapipe/framework/port:integral_types",
+        "//mediapipe/framework/port:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+    ],
+)
+
+cc_library(
     name = "annotation_renderer",
     srcs = ["annotation_renderer.cc"],
     hdrs = ["annotation_renderer.h"],
@@ -158,6 +179,7 @@ cc_library(
     ] + select({
         "//conditions:default": ["resource_util_default.cc"],
         "//mediapipe:android": ["resource_util_android.cc"],
+        "//mediapipe/framework:android_no_jni": ["resource_util_loonix.cc"],
         "//mediapipe:ios": ["resource_util_apple.cc"],
         "//mediapipe:macos": ["resource_util_default.cc"],
     }),
@@ -192,6 +214,7 @@ cc_library(
             "//mediapipe/util/android:asset_manager_util",
             "//mediapipe/util/android/file/base",
         ],
+        "//mediapipe/framework:android_no_jni": [],
         "//mediapipe:ios": [],
         "//mediapipe:macos": [
             "@com_google_absl//absl/flags:flag",
@@ -230,6 +253,7 @@ cc_library(
     deps = [
         "//mediapipe/framework/formats:detection_cc_proto",
         "//mediapipe/framework/formats:location",
+        "//mediapipe/framework/formats:location_opencv",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/types:variant",
         "//mediapipe/framework/port:status",

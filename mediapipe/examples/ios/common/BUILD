@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-licenses(["notice"])  # Apache 2.0
+licenses(["notice"])
 
 objc_library(
     name = "CommonMediaPipeAppLibrary",
@@ -35,7 +35,9 @@ objc_library(
         "CoreMedia",
         "UIKit",
     ],
-    visibility = ["//mediapipe:__subpackages__"],
+    visibility = [
+        "//mediapipe:__subpackages__",
+    ],
     deps = [
         "//mediapipe/objc:mediapipe_framework_ios",
         "//mediapipe/objc:mediapipe_input_sources_ios",

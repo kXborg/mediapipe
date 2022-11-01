@@ -27,12 +27,12 @@
 #include "mediapipe/framework/formats/video_stream_header.h"
 #include "mediapipe/framework/port/core_proto_inc.h"
 #include "mediapipe/framework/port/logging.h"
-#include "mediapipe/gpu/gpu_buffer.h"
 #include "mediapipe/java/com/google/mediapipe/framework/jni/colorspace.h"
 #include "mediapipe/java/com/google/mediapipe/framework/jni/graph.h"
 #include "mediapipe/java/com/google/mediapipe/framework/jni/jni_util.h"
 #if !MEDIAPIPE_DISABLE_GPU
 #include "mediapipe/gpu/gl_calculator_helper.h"
+#include "mediapipe/gpu/gpu_buffer.h"
 #endif  // !MEDIAPIPE_DISABLE_GPU
 
 namespace {
@@ -57,14 +57,15 @@ int64_t CreatePacketWithContext(jlong context,
 }
 
 #if !MEDIAPIPE_DISABLE_GPU
-mediapipe::GpuBuffer CreateGpuBuffer(JNIEnv* env, jobject thiz, jlong context,
-                                     jint name, jint width, jint height,
-                                     jobject texture_release_callback) {
+absl::StatusOr<mediapipe::GpuBuffer> CreateGpuBuffer(
+    JNIEnv* env, jobject thiz, jlong context, jint name, jint width,
+    jint height, jobject texture_release_callback) {
   mediapipe::android::Graph* mediapipe_graph =
       reinterpret_cast<mediapipe::android::Graph*>(context);
   auto* gpu_resources = mediapipe_graph->GetGpuResources();
-  CHECK(gpu_resources) << "Cannot create a mediapipe::GpuBuffer packet on a "
-                          "graph without GPU support";
+  RET_CHECK(gpu_resources)
+      << "Cannot create a mediapipe::GpuBuffer packet on a "
+         "graph without GPU support";
   mediapipe::GlTextureBuffer::DeletionCallback cc_callback;
 
   if (texture_release_callback) {
@@ -78,7 +79,7 @@ mediapipe::GpuBuffer CreateGpuBuffer(JNIEnv* env, jobject thiz, jlong context,
                          "(JL"
                          "com/google/mediapipe/framework/TextureReleaseCallback"
                          ";)V");
-    CHECK(release_method);
+    RET_CHECK(release_method);
     env->DeleteLocalRef(my_class);
 
     jobject java_callback = env->NewGlobalRef(texture_release_callback);
@@ -256,9 +257,13 @@ static mediapipe::Packet createAudioPacket(const uint8_t* audio_sample,
   // Preparing and normalize the audio data.
   // kMultiplier is same as what used in av_sync_media_decoder.cc.
   static const float kMultiplier = 1.f / (1 << 15);
-  // We try to not assume the Endian order of the data.
   for (int sample = 0; sample < num_samples; ++sample) {
     for (int channel = 0; channel < num_channels; ++channel) {
+      // MediaPipe createAudioPacket can currently only handle
+      // AudioFormat.ENCODING_PCM_16BIT data, so here we are reading 2 bytes per
+      // sample, using ByteOrder.LITTLE_ENDIAN byte order, which is
+      // ByteOrder.nativeOrder() on Android
+      // (https://developer.android.com/ndk/guides/abis.html).
       int16_t value = (audio_sample[1] & 0xff) << 8 | audio_sample[0];
       (*matrix)(channel, sample) = kMultiplier * value;
       audio_sample += 2;
@@ -360,8 +365,13 @@ JNIEXPORT jlong JNICALL PACKET_CREATOR_METHOD(nativeCreateMatrix)(
     return 0L;
   }
   std::unique_ptr<mediapipe::Matrix> matrix(new mediapipe::Matrix(rows, cols));
-  // The java and native has the same byte order, by default is little Endian,
-  // we can safely copy data directly, we have tests to cover this.
+  // Android is always
+  // little-endian(https://developer.android.com/ndk/guides/abis.html), even
+  // though Java's ByteBuffer defaults to
+  // big-endian(https://docs.oracle.com/javase/7/docs/api/java/nio/ByteBuffer.html),
+  // there is no Java ByteBuffer involved, JNI does not change the endianness(we
+  // have PacketGetterTest.testEndianOrder() to cover this case), so we can
+  // safely copy data directly here.
   env->GetFloatArrayRegion(data, 0, rows * cols, matrix->data());
   mediapipe::Packet packet = mediapipe::Adopt(matrix.release());
   return CreatePacketWithContext(context, packet);
@@ -400,18 +410,22 @@ JNIEXPORT jlong JNICALL PACKET_CREATOR_METHOD(nativeCreateCpuImage)(
 JNIEXPORT jlong JNICALL PACKET_CREATOR_METHOD(nativeCreateGpuImage)(
     JNIEnv* env, jobject thiz, jlong context, jint name, jint width,
     jint height, jobject texture_release_callback) {
-  mediapipe::Packet image_packet =
-      mediapipe::MakePacket<mediapipe::Image>(CreateGpuBuffer(
-          env, thiz, context, name, width, height, texture_release_callback));
-  return CreatePacketWithContext(context, image_packet);
+  auto buffer_or = CreateGpuBuffer(env, thiz, context, name, width, height,
+                                   texture_release_callback);
+  if (ThrowIfError(env, buffer_or.status())) return 0L;
+  mediapipe::Packet packet =
+      mediapipe::MakePacket<mediapipe::Image>(std::move(buffer_or).value());
+  return CreatePacketWithContext(context, packet);
 }
 
 JNIEXPORT jlong JNICALL PACKET_CREATOR_METHOD(nativeCreateGpuBuffer)(
     JNIEnv* env, jobject thiz, jlong context, jint name, jint width,
     jint height, jobject texture_release_callback) {
+  auto buffer_or = CreateGpuBuffer(env, thiz, context, name, width, height,
+                                   texture_release_callback);
+  if (ThrowIfError(env, buffer_or.status())) return 0L;
   mediapipe::Packet packet =
-      mediapipe::MakePacket<mediapipe::GpuBuffer>(CreateGpuBuffer(
-          env, thiz, context, name, width, height, texture_release_callback));
+      mediapipe::MakePacket<mediapipe::GpuBuffer>(std::move(buffer_or).value());
   return CreatePacketWithContext(context, packet);
 }
 
